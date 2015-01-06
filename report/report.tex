@@ -1,0 +1,173 @@
+\documentclass[a4paper,fleqn,13pt]{article}
+\usepackage{fancyhdr}
+\usepackage{multirow}
+\usepackage{ifpdf}
+\usepackage[utf8]{inputenc}
+\usepackage[pdftex]{graphicx}
+\usepackage{subfigure}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\DeclareGraphicsExtensions{.png,.pdf,.jpg}
+\textwidth 6.0in
+\topmargin 0.0in
+\newcommand\transpose{{}^\mathsf{T}}
+\setlength{\parskip}{1em}
+
+
+\begin{document}
+\title{ Using Sparse Matrix for the Contact Calculation}
+\author{\bf Zhan Wang}
+\date{ 13 July 2014}
+\maketitle
+\pagestyle{fancy}
+\rhead{}
+\lhead{}
+\oddsidemargin 0in
+\evensidemargin 0in
+\tableofcontents
+
+\newpage
+\flushleft
+
+\section{The Formulation of $G$ Matrix}
+
+We have the EoM:
+\begin{align}
+ 0 &= \ddot{g}={W}\transpose \dot{u} \label{gdotdot} \\
+ M \dot{u} &= h + W \lambda \ . \label{movement} 
+\end{align}
+
+From \ref{movement}, the acceleration $\dot{u}$ can be expressed as
+\begin{equation}
+ \dot{u} = M^{-1}(h + W \lambda) \label{dotu} .
+\end{equation}
+
+Inserting \ref{dotu} into \ref{gdotdot}, we can get
+\begin{equation}
+ \begin{aligned}
+  0 = \ddot{g} &={W}\transpose \dot{u} \\
+                &={W}\transpose(M^{-1}h + M^{-1}W \lambda) \\
+                &={W}\transpose M^{-1}h + ({W}\transpose M^{-1} W )\lambda \\
+                &={W}\transpose M^{-1}h + G \lambda
+ \end{aligned}
+\end{equation}
+where $G$ is 
+\begin{equation}
+ G = {W}\transpose M^{-1} W  \ . \label{G_original}
+\end{equation}
+
+As the mass matrix $M$ is a real-valued symmetric positive-definite matrix, it can be decomposed by the Cholesky decomposition:
+\begin{equation}
+ M = L {L}\transpose , \label{M_decomposation} 
+\end{equation}
+where $L$ is a lower triangular matrix with real and positive diagonal entries.
+
+Inserting \ref{M_decomposation} in to \ref{G_original}, we can get
+\begin{align} \label{G_simplify}
+  G = {W}\transpose M^{-1} W &= {W}\transpose \left(L {L}\transpose \right)^{-1}W \\
+                             &= {W}\transpose {\left( {L}\transpose\right)}^{-1} L^{-1} W \\
+                             &= {W}\transpose  {\left(L^{-1}\right)}\transpose L^{-1} W \\
+                             &= \left[{W}\transpose  {\left(L^{-1}\right)}\transpose \right] \left(L^{-1} W \right) \\
+                             &= {\left(L^{-1} W \right)}\transpose \left(L^{-1} W \right) \\
+                             &= {y}\transpose y 
+\end{align}
+where 
+\begin{equation}
+ y = L^{-1} W  \ . \label{y}
+\end{equation}
+
+Therefore, the calculation of matrix $G$ can be performed in two steps:
+\begin{itemize}
+ \item solving the triangular system $L y = W $ represented by \ref{y}
+ \item multiplying the solved matrix $y$ with its transpose to get $G$
+\end{itemize}
+
+\section{Implementation of Solving the Triangular System $L y = W $}
+
+\subsection{Should we choose iterative method or a direct method for getting $L$?}
+\begin{itemize}
+  \item LU decomposition has a complexity of $O(\frac{2}{3} n^3)$,  if the matrix is positive definite,  Cholesky decomposition  is roughly twice as efficient as the LU decomposition for solving systems of linear equations, and more stable.  And backward or forward substitution has a complexity $O(n^2)$.
+  \item For iterative methods, the number of scalar multiplications is $0(n^2)$ at each iteration. 
+  \item If the total number of iterations required for convergence is much less than $n$, then iterative methods are more efficient than direct methods. 
+  \item Iterative method has a less computational cost and also demands less memory. So  iterative methods are well suited for solving large sparse linear system.
+\end{itemize}
+As in our case, the dimension of the linear system is not so large, the $L$ is already computed in the previous step. 
+
+\subsection{Choosing the library for the forward substitution of $L y = W $}
+There are a lot of open sourced libraries containing the routine of forward substitution for sparse matrices. Some of them focus on the optimization of memory access, e.g., \lstinline!Sparse Basic Linear Algebra Subprograms (BLAS) Library!. Others focus on the optimization of algorithm of solving process, e.g. \lstinline!csparse!.
+
+\lstinline!CSPARSE! is a C library which implements a number of direct methods for sparse linear systems, by Timothy Davis.
+For forward subsection, \lstinline!csparse! applies graph theory to find out the nonzero pattern of the solution $y$ first. And then performs the substitution only for the nonzero entries of $y$.
+Because its fully utilization of the sparsity of the linear system to avoid unnecessary calculation and memory access, this algorithm can reduce complexity of the forward substitution from $O(n^2)$ to $O(n)$. 
+
+In the book \emph{Timothy Davis, Direct Methods for Sparse Linear Systems, SIAM, 2006}, the author discusses this algorithm in details .
+
+\subsection{Creating the Compressed Column format sparse matrices}
+As the algorithms in \lstinline!csparse! are based on the \emph{compressed-column} format, we need to transform the matrix $L$ and $W$ from $fmatvec: Mat$ into compressed-column format.
+It is performed into two steps: 
+\begin{itemize}
+ \item construct a triplet format matrix $C$ by \lstinline!cs_spalloc(m, n, nz, 1, 1)!, 
+  where $m, n$ are the declared row and column size, $nz$ is the number of nonzero entries, and the last input value $1$ indicates the format to be triplet. (In \lstinline!csparse!, \lstinline!cs_spalloc! is used for the memory allocation for both triplet and compressed column format. When the last value equals to zero, it performs allocation for compressed column format.) 
+ \item read every the blocked potential submatrix, and push the nonzero entries into a triplet format matrix using function \lstinline!cs_entry(C, row, column, entry)!. The order of pushing nonzero entries can be arbitrary.
+ \item call \lstinline!cs_triplet(C)! to transform the triplet format into compressed format.
+\end{itemize}
+In this way, $nz$ can be arbitrary given, because 
+\lstinline!cs_entry()! will dynamic double the memory size by \lstinline!realloc()! when the allocated memory is not enough. It will consider whether there is still enough space after the original memory position. If it is, it will extend the memory area of the original pointer. Otherwise it will look for a new memory position, declare new allocated memory size, and then copy the original data to this new position.
+
+In order to avoid this unnecessary coping in every timestep, it is better to estimate a appropriate value for $nz$. In our case, $nz = 7 * n$ is recommended.
+
+\subsection{Solving the System using \lstinline!csparse!}
+After we get the compressed $L$ and $W$ matrices, we can call the \lstinline!cs_splsolve()! for every column of $W$, to get the $y$.
+  \begin{lstlisting}[float=!h, caption=solving the $k$th column of $W$, label=Code:solving, mathescape=true]
+  for (int k = 0; k < W[j].cols(); k++) {
+    cs_splsolve (cs_L_LLM, cs_Wj, k, xi, yele + ylda * k , 0);
+  \end{lstlisting}
+where \lstinline!yele + ylda * k! is the pointer to the $k$th column of \lstinline!y.ele!, and \lstinline!xi! stores nonzero pattern of the solution (it is not needed in our case).
+
+\section{Implementation of the matrix multiplication $G = {y}\transpose y $}
+Similar to solving the triangular system, the implementation the matrix multiplication needs to consider both how to access the memory efficiently and how to do the operation in order to avoid the multiplication for zeros.
+It turns out that most of the modern processors have the ability to simplify the multiplication for zeros automatically. That is, the multiplication between zero and a nonzero is much more faster than the normal multiplication between two nonzero values.
+
+So I focus on the optimization of how to access the memory more efficiently.
+  
+\subsection{Do we need sparse matrix multiplication for $G = {y}\transpose y $}
+The Matlab test shows that with full matrix format, the multiplication is about ten times faster than a direct multiplication between two compressed column format sparse matrices.
+That is because when $y$ is stored in compressed-column format, it is time consuming to access the every column of ${y}\transpose$.
+
+Then I considered whether it is possible to use the multiplication routine provided by \lstinline!csparse!. The multiplication routine from \lstinline!csparse! is designed for the multiplication of two arbitrary sparse matrices. It spends some time to check the sparsity pattern before doing the real calculation.
+
+In our case, which turns out to be a very special multiplication, because the the resulting matrix $G$ will be a symmetric matrix. Taking this into consideration, the computational cost can be reduced in half immediately. And also, the two multiplied matrices are transposed matrices to each other.
+So the entry of $G(i,j)$ can be calculated by
+\begin{equation}
+ G(i,j) = {y}\transpose(i,:) y(:,j) = {y(:,i)}\transpose y(:,j)
+\end{equation}
+Both $y(:,i)$ and ${y(:,j)}$ are column vectors of matrix $y$, which can be accessed very efficiently. 
+
+The algorithm of calculating $G$ is then described by algorithm \ref{Code:calG}.
+
+  \begin{lstlisting}[float=!h, caption=Algorithm of calculating $G$,label=Code:calG, mathescape=true]
+  for (int i = 0; i < y.cols(); i++) {
+    Vec temp = y.col(i); // temp can be kept in the fast memory (cache)
+    for (int j = i; j < y.cols(); j++) {
+      double val = scalarProduct(temp, y.col(j));
+      G(i, j) = val;
+      G(j, i) = val;
+    }
+  }
+  \end{lstlisting}
+
+
+In the inner iteration, the $i$th column will be accessed repeatedly.    
+\lstinline!Vec temp = y.col(i);! is written explicitly so that it may be easier for the complier to detect this feature and to keep the $i$th column in the fast memory (cache).
+
+Currently $G$ is declared as a general matrix type. 
+If $G$ can be declared to be \lstinline!fmatvec:Symmetric!,
+then only the elements in the lower triangular will be stored (e.g. in column wise).
+In that case, \lstinline!G(j, i) = val! will not be needed in algorithm \ref{Code:calG}.
+And the order of calculating entries of $G$, described in algorithm \ref{Code:calG}, is suitable for the column wise stored $G$ matrix, because it access the entries of $G$ in the order how it is stored in memory.   
+In our case, I test both row wise and column wise calculating order, the performance does not show a big difference.
+
+
+\end{document}
