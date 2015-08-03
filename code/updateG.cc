@@ -91,8 +91,9 @@ void System::updateG(double t, int j) {
 
 // solve Ly=w
   for (int k = 0; k < W[j].cols(); k++) {
-    cs_splsolve (cs_L_LLM, cs_Wj, k, xi, yele + ylda * k , 0); // yele + ylda * k is the pointer to the kth column of y.ele todo: is it acceptable by accessing the private data of y?
-
+    cs_splsolve (cs_L_LLM, cs_Wj, k, xi, yele + ylda * k , 0); // yele + ylda * k is the pointer to the kth column of y.ele. 
+                                                               // Directly stores the data to the pointer of y in order to
+                                                               // avoid to create temporary vector x.
 //    double * x = (double *) calloc(n, sizeof(double));
 //    cs_splsolve(cs_L_LLM, cs_Wj, k, xi, x, 0);
 //    for (int iter = 0; iter < n; iter++) {
@@ -101,15 +102,14 @@ void System::updateG(double t, int j) {
 //    free(x);
   }
 
-  // Do we need sparse matrix multiplication for G = y'*y, when G is a dense matrix. check by matlab
-  // Result: the matlab test shows that with full matrix format is faster, this is because that y is stored in compressed-column format and it is hard to access the the column of y'.
-  // maybe it is better to store the y into the format compressed-column based on fmatvec and then implement the multiplication, it is different than the normal sparse matrix multiplication
-
-  // if G is symmetric type, only the elements in the lower triangular is stored in column wise.
-  // if it is accessed in row wise order in the upper triangular part, is will be re-mapped to the lower part,
-  // so ele can be still one by one in the order how they stored in memory.
-
-//  calculate G and copy to Gs
+/* calculate G and copy to Gs 
+ * Todo: Do we need sparse matrix multiplication for G = y'*y, when G is a dense matrix. check by matlab. (Done!)
+ * Result: the matlab test shows that with full matrix format is faster, this is because that y is stored in compressed-column format and it is hard to access the the column of y'.
+ * maybe it is better to store the y into the format compressed-column based on fmatvec and then implement the multiplication, it is different than the normal sparse matrix multiplication
+ * if G is symmetric type, only the elements in the lower triangular is stored in column wise.
+ * if it is accessed in row wise order in the upper triangular part, is will be re-mapped to the lower part,
+ * so ele can be still one by one in the order how they stored in memory.
+ **/
   G.resize(y.cols(), NONINIT);
 
   for (int i = 0; i < y.cols(); i++) {
